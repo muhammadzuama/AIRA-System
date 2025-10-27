@@ -94,6 +94,8 @@ class _ChatPageState extends State<ChatPage> {
                   children: [
                     Expanded(
                       child: TextField(
+                        maxLines: null, // <-- ini kuncinya: biar wrap otomatis
+                        minLines: 1, // minimal 1 baris
                         controller: _controller,
                         decoration: InputDecoration(
                           hintText: 'Tanyakan seputar seleksi ASN...',

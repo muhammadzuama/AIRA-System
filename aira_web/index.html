@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AIRA Asisten Informasi Rekrutmen ASN</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="color-scheme" content="light dark" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* Terapkan font Inter sebagai default */
+      body {
+        font-family: "Inter", sans-serif;
+      }
+      .bubble {
+        max-width: 80%;
+      }
+
+      /* Scrollbar kustom untuk kotak pesan */
+      #messages::-webkit-scrollbar {
+        width: 6px;
+      }
+      #messages::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #messages::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 3px;
+      }
+      #messages::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8;
+      }
+    </style>
+  </head>
+  <body class="bg-gradient-to-br from-indigo-50 to-slate-100 text-slate-800">
+    <div class="max-w-4xl mx-auto p-4 md:p-8">
+      <header class="mb-6 flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold">✨ AIRA (Asisten Informasi Rekrutmen ASN)</h1>
+          <p class="text-sm text-slate-600 font-medium">
+            Asisten Rekomendasi & Administrasi seputar Rekrutmen ASN
+          </p>
+        </div>
+        <span class="inline-flex items-center gap-2 text-sm">
+          <span
+            class="w-2.5 h-2.5 rounded-full bg-gray-300"
+            id="healthDot"
+          ></span>
+          <span id="healthText" class="text-gray-500">menghubungkan…</span>
+        </span>
+      </header>
+
+      <main
+        class="bg-white rounded-2xl shadow-xl p-4 md:p-6 min-h-[70vh] flex flex-col"
+      >
+        <div id="messages" class="flex-1 overflow-y-auto space-y-4 pr-1">
+          <div class="flex items-start gap-3">
+            <div
+              class="shrink-0 w-10 h-10 rounded-full bg-indigo-600 text-white grid place-items-center"
+            >
+              🤖
+            </div>
+            <div
+              class="bubble bg-white border border-slate-200 rounded-2xl px-4 py-3"
+            >
+              <p class="text-sm">
+                Halo! Saya <b>AIRA</b>. Jelaskan kebutuhan Anda (mis.
+                <i
+                  >Tanya seputar formasi, Administrasi,atau rekomendasi Formasi</i
+                >). Saya akan jawaban sesuai data yang diberikan.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div id="chips" class="flex flex-wrap gap-2 mt-4"></div>
+
+        <form id="chatForm" class="mt-4 flex gap-2" autocomplete="off">
+          <input
+            id="chatInput"
+            class="flex-1 rounded-xl border border-slate-200 bg-white text-slate-900 px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100"
+            placeholder="Tulis pertanyaan Anda…"
+          />
+
+          <button
+            id="sendBtn"
+            class="rounded-xl px-4 py-3 bg-indigo-600 text-white font-medium shadow-md hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5"
+          >
+            Kirim
+          </button>
+        </form>
+
+        <p id="errorMsg" class="hidden mt-3 text-sm text-red-600"></p>
+      </main>
+
+      <footer class="mt-6 text-xs text-slate-400">
+        © <span id="year"></span> AIRA
+      </footer>
+    </div>
+
+    <script>
+      // ============ Konfigurasi (hard-code + override URL/localStorage) ============
+      const DEFAULTS = {
+        api: "https://7lp30gph-5000.asse.devtunnels.ms/",
+        chat: "/ask",
+        health: "disable", // matikan health check by default
+      };
+      const qs = new URLSearchParams(location.search);
+      const getCfg = (key, lsKey, def) =>
+        qs.get(key) || localStorage.getItem(lsKey) || def;
+
+      const API_BASE = getCfg("api", "ASN_HELPER_API", DEFAULTS.api);
+      const CHAT_PATH = getCfg("chat", "ASN_HELPER_CHAT", DEFAULTS.chat);
+      const HEALTH_PATH = getCfg(
+        "health",
+        "ASN_HELPER_HEALTH",
+        DEFAULTS.health
+      );
+
+      // Persist session id (tidak perlu user isi)
+      const SESSION_KEY = "ASN_HELPER_SESSION_ID";
+      let SESSION_ID = localStorage.getItem(SESSION_KEY);
+      if (!SESSION_ID) {
+        SESSION_ID =
+          self.crypto && crypto.randomUUID
+            ? crypto.randomUUID()
+            : String(Date.now());
+        localStorage.setItem(SESSION_KEY, SESSION_ID);
+      }
+
+      // =========================== Util UI ===========================
+      const el = (s) => document.querySelector(s);
+      const messages = el("#messages");
+      const chips = el("#chips");
+      const errorMsg = el("#errorMsg");
+      const sendBtn = el("#sendBtn");
+
+      const escapeHtml = (str) =>
+        (str || "").replace(
+          /[&<>"']/g,
+          (s) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            }[s])
+        );
+
+      // [MODIFIKASI] Fungsi addMessage untuk membedakan bubble user dan bot
+      function addMessage(role, html) {
+        const wrap = document.createElement("div");
+        const isUser = role === "user";
+
+        // User: justify-end (rata kanan), Bot: default (rata kiri)
+        wrap.className = `flex items-start gap-3 ${
+          isUser ? "justify-end" : ""
+        }`;
+
+        const avatarIcon = isUser ? "🧑" : "🤖";
+        // User: Avatar abu-abu, Bot: Avatar indigo
+        const avatarBg = isUser
+          ? "bg-slate-200 text-slate-700"
+          : "bg-indigo-600 text-white";
+        // User: Bubble indigo, Bot: Bubble putih
+        const bubbleBg = isUser
+          ? "bg-indigo-600 text-white"
+          : "bg-white border border-slate-200";
+
+        const avatarHTML = `<div class="shrink-0 w-10 h-10 rounded-full ${avatarBg} grid place-items-center">${avatarIcon}</div>`;
+        const bubbleHTML = `<div class="bubble ${bubbleBg} rounded-2xl px-4 py-3 text-sm">${html}</div>`;
+
+        // User: [Bubble] [Avatar], Bot: [Avatar] [Bubble]
+        wrap.innerHTML = isUser
+          ? bubbleHTML + avatarHTML
+          : avatarHTML + bubbleHTML;
+
+        messages.appendChild(wrap);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      // [MODIFIKASI] Fungsi setHealth untuk mengubah warna status
+      function setHealth(ok, text) {
+        const dot = el("#healthDot");
+        const txt = el("#healthText");
+
+        if (ok) {
+          dot.className = "w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse";
+          txt.textContent = text;
+          txt.className = "text-sm text-green-600";
+        } else if (text === "offline") {
+          dot.className = "w-2.5 h-2.5 rounded-full bg-red-500";
+          txt.textContent = text;
+          txt.className = "text-sm text-red-600";
+        } else {
+          // 'menghubungkan...'
+          dot.className = "w-2.5 h-2.5 rounded-full bg-gray-300";
+          txt.textContent = text;
+          txt.className = "text-sm text-gray-500";
+        }
+      }
+
+      // [MODIFIKASI] Fungsi setSuggestions untuk style chips
+      function setSuggestions(list) {
+        chips.innerHTML = "";
+        (list || []).forEach((k) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          // Ganti style chip ke tema indigo
+          b.className =
+            "px-3 py-1.5 rounded-full text-sm bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors";
+          b.textContent = String(k).replaceAll("_", " ");
+          b.onclick = () => {
+            el("#chatInput").value = String(k).replaceAll("_", " ");
+            el("#chatForm").dispatchEvent(
+              new Event("submit", { cancelable: true })
+            );
+          };
+          chips.appendChild(b);
+        });
+      }
+
+      // [MODIFIKASI] Fungsi formatBotReply untuk style link dan line break
+      function formatBotReply(j) {
+        let links = "";
+        if (j.links && j.links.length) {
+          // Ganti style link
+          links =
+            '<div class="mt-3 flex flex-wrap gap-2">' +
+            j.links
+              .map(
+                (l) =>
+                  `<a class="text-xs px-2 py-1 border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors" href="${
+                    l.url
+                  }" target="_blank" rel="noreferrer">🔗 ${escapeHtml(
+                    l.title || l.url
+                  )}</a>`
+              )
+              .join("") +
+            "</div>";
+        }
+        // Ganti \n dengan <br> agar format balasan multi-baris tampil benar
+        const formattedReply = escapeHtml(j.reply).replace(/\n/g, "<br/>");
+        return `<div class="space-y-2">${formattedReply}${links}</div>`;
+      }
+
+      // =========================== Adapter API ===========================
+      // Kirim sesuai kontrak: { question, session_id }
+      const adaptRequest = (text) => ({
+        question: text,
+        session_id: SESSION_ID,
+      });
+
+      // Baca balasan: utamakan `answer`, fallback `reply`/`message`/OpenAI-style
+      const adaptResponse = (res) => ({
+        reply:
+          res.answer ??
+          res.reply ??
+          res.message ??
+          res?.data?.answer ??
+          res?.choices?.[0]?.message?.content ??
+          res?.choices?.[0]?.text ??
+          "",
+        links: res.links || [],
+        suggestions: res.suggestions || [],
+      });
+
+      // =========================== Health check ===========================
+      async function checkHealth() {
+        if (HEALTH_PATH === "disable") {
+          setHealth(true, "tersambung");
+          return;
+        }
+        try {
+          const r = await fetch(`${API_BASE}${HEALTH_PATH}`);
+          await r.json();
+          setHealth(true, "tersambung");
+        } catch (e) {
+          try {
+            const r2 = await fetch(`${API_BASE}${CHAT_PATH}`, {
+              method: "OPTIONS",
+            });
+            setHealth(r2.ok, r2.ok ? "tersambung" : "offline");
+          } catch (_) {
+            setHealth(false, "offline");
+          }
+        }
+      }
+
+      // =========================== Kirim chat (JSON {question, session_id}) ===========================
+      async function sendChat(text) {
+        errorMsg.classList.add("hidden");
+        addMessage("user", escapeHtml(text));
+        addMessage("bot", '<em class="opacity-60">Mengetik…</em>'); // [PERUBAHAN] Efek mengetik
+        sendBtn.disabled = true;
+
+        try {
+          const r = await fetch(`${API_BASE}${CHAT_PATH}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(adaptRequest(text)),
+          });
+
+          const contentType = r.headers.get("content-type") || "";
+          const rawText = await r.text();
+          if (!r.ok) {
+            messages.lastElementChild.querySelector(
+              "div:last-child"
+            ).innerHTML =
+              '<span class="text-red-600">Gagal terhubung ke API.</span>';
+            errorMsg.textContent = `HTTP ${r.status} ${
+              r.statusText
+            }: ${rawText.slice(0, 200)}`;
+            errorMsg.classList.remove("hidden");
+            sendBtn.disabled = false;
+            return;
+          }
+
+          let data;
+          try {
+            data = contentType.includes("application/json")
+              ? JSON.parse(rawText)
+              : { answer: rawText };
+          } catch {
+            data = { answer: rawText };
+          }
+
+          const j = adaptResponse(data);
+          messages.lastElementChild.querySelector("div:last-child").innerHTML =
+            formatBotReply(j);
+          setSuggestions(j.suggestions);
+        } catch (err) {
+          messages.lastElementChild.querySelector("div:last-child").innerHTML =
+            '<span class="text-red-600">Gagal terhubung ke API.</span>';
+          errorMsg.textContent =
+            "Periksa CORS & format respons. Detail: " +
+            (err?.message || String(err));
+          errorMsg.classList.remove("hidden");
+        } finally {
+          sendBtn.disabled = false;
+        }
+      }
+
+      // =========================== Events & Bootstrap ===========================
+      el("#chatForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = el("#chatInput").value.trim();
+        if (!text) return;
+        el("#chatInput").value = "";
+        sendChat(text);
+      });
+      el("#year").textContent = new Date().getFullYear();
+      checkHealth();
+      setSuggestions(["rekomendasi", "formasi", "syarat-syarat administrasi"]);
+
+      console.log(
+        "API_BASE=",
+        API_BASE,
+        "CHAT_PATH=",
+        CHAT_PATH,
+        "HEALTH_PATH=",
+        HEALTH_PATH,
+        "SESSION_ID=",
+        SESSION_ID
+      );
+    </script>
+  </body>
+</html>
