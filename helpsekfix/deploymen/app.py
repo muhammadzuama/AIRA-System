@@ -13,8 +13,6 @@ from langchain.output_parsers import StructuredOutputParser, ResponseSchema
 # --- Konfigurasi ---
 FAISS_INDEX_PATH = "/Users/muhammadzuamaalamin/Documents/risetmandiir/project/AIRA/helpsekfix/model/faiss_index123"
 EMBEDDING_MODEL_PATH = "/Users/muhammadzuamaalamin/Documents/fintunellm/model/multilingual-e5-large-instruct"
-# GOOGLE_API_KEY = os.getenv("AIzaSyCiT8Z6lhmKfaxnZSSYlN0zygTD-yOow84")  # ⚠️ Simpan di environment variable!
-
 # if not GOOGLE_API_KEY:
 #     raise ValueError("Setel environment variable GOOGLE_API_KEY terlebih dahulu.")
 
